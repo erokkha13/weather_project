@@ -4,10 +4,10 @@ import requests
 app = Flask(__name__)
 
 API_KEY = 'jyKafXwbRGuHU20upPyOc6P8PePwutoe'
-
+app.json.ensure_ascii = False
 
 def get_weather_data(latitude, longitude):
-    location_url = f"http://dataservice.accuweather.com/locations/v1/cities/geoposition/search"
+    location_url = "http://dataservice.accuweather.com/locations/v1/cities/geoposition/search"
     params = {
         'apikey': API_KEY,
         'q': f"{latitude},{longitude}"
@@ -54,6 +54,14 @@ def extract_key_parameters(weather_json):
         raise Exception(f"Отсутствует ожидаемый ключ в данных: {e}")
 
 
+def check_bad_weather(temperature_celsius, wind_speed_kmh, precipitation_probability_percent):
+    if (temperature_celsius < -10 or temperature_celsius > 30) \
+            or (wind_speed_kmh > 50) \
+            or (precipitation_probability_percent > 70):
+        return "Плохие погодные условия"
+    return "Хорошие погодные условия"
+
+
 @app.route('/weather', methods=['GET'])
 def weather():
     try:
@@ -64,9 +72,21 @@ def weather():
             return jsonify({'error': 'Необходимо указать latitude и longitude'}), 400
 
         weather_json = get_weather_data(latitude, longitude)
+
         key_parameters = extract_key_parameters(weather_json)
 
-        return jsonify(key_parameters)
+        weather_condition = check_bad_weather(
+            key_parameters['temperature_celsius'],
+            key_parameters['wind_speed_kmh'],
+            key_parameters['precipitation_probability_percent']
+        )
+
+        response = {
+            **key_parameters,
+            'weather_condition': weather_condition
+        }
+
+        return jsonify(response)
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
