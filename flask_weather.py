@@ -1,95 +1,217 @@
-from flask import Flask, jsonify, request
+from flask import Flask, render_template, request
 import requests
 
 app = Flask(__name__)
-
-API_KEY = 'jyKafXwbRGuHU20upPyOc6P8PePwutoe'
 app.json.ensure_ascii = False
 
-def get_weather_data(latitude, longitude):
-    location_url = "http://dataservice.accuweather.com/locations/v1/cities/geoposition/search"
-    params = {
-        'apikey': API_KEY,
-        'q': f"{latitude},{longitude}"
-    }
-    location_response = requests.get(location_url, params=params)
-    if location_response.status_code != 200:
-        raise Exception("Ошибка при получении Location Key")
-
-    location_data = location_response.json()
-    location_key = location_data.get('Key')
-    if not location_key:
-        raise Exception("Location Key не найден")
-
-    weather_url = f"http://dataservice.accuweather.com/currentconditions/v1/{location_key}"
-    params = {
-        'apikey': API_KEY,
-        'details': 'true'
-    }
-    weather_response = requests.get(weather_url, params=params)
-    if weather_response.status_code != 200:
-        raise Exception("Ошибка при получении погодных данных")
-
-    weather_data = weather_response.json()
-    if not weather_data:
-        raise Exception("Нет данных о погоде")
-
-    return weather_data[0]
+API_KEY = 'lAL0BpVsgFlZeHsdBS2HXAgqfAAkXQQa'
 
 
-def extract_key_parameters(weather_json):
+def fetch_location(city):
     try:
-        temperature = weather_json['Temperature']['Metric']['Value']
-        humidity = weather_json['RelativeHumidity']
-        wind_speed = weather_json['Wind']['Speed']['Metric']['Value']
-        precipitation_probability = weather_json.get('PrecipitationProbability', 0)
+        url = "http://dataservice.accuweather.com/locations/v1/cities/search"
+        params = {
+            'apikey': API_KEY,
+            'q': city,
+            'language': 'ru-RU',
+            'details': 'false',
+        }
+        response = requests.get(url, params=params, timeout=5)
+        response.raise_for_status()
 
+        data = response.json()
+        if not data:
+            raise ValueError(f"Город '{city}' не найден. Проверьте правильность ввода.")
+
+        location = data[0]
         return {
-            'temperature_celsius': temperature,
-            'humidity_percent': humidity,
-            'wind_speed_kmh': wind_speed,
-            'precipitation_probability_percent': precipitation_probability
+            'key': location['Key'],
+            'latitude': location['GeoPosition']['Latitude'],
+            'longitude': location['GeoPosition']['Longitude']
+        }
+
+    except requests.exceptions.Timeout:
+        raise ConnectionError("Превышено время ожидания ответа от сервера.")
+    except requests.exceptions.ConnectionError:
+        raise ConnectionError("Не удалось подключиться к серверу.")
+    except requests.exceptions.HTTPError as err:
+        if response.status_code == 401:
+            raise PermissionError("Неверный API-ключ.")
+        elif response.status_code == 403:
+            raise PermissionError("Доступ к API запрещён.")
+        elif response.status_code == 404:
+            raise ValueError(f"Город '{city}' не найден.")
+        else:
+            raise Exception(f"Ошибка HTTP при поиске города: {err}")
+    except ValueError as ve:
+        raise ve
+    except Exception as e:
+        raise Exception(f"Произошла ошибка при поиске города: {e}")
+
+
+def fetch_weather(location_key):
+    try:
+        url = f"http://dataservice.accuweather.com/currentconditions/v1/{location_key}"
+        params = {
+            'apikey': API_KEY,
+            'details': 'true'
+        }
+        response = requests.get(url, params=params, timeout=5)
+        response.raise_for_status()
+
+        data = response.json()
+        if not data:
+            raise ValueError("Нет данных о погоде.")
+
+        return data[0]
+
+    except requests.exceptions.Timeout:
+        raise ConnectionError("Превышено время ожидания ответа от сервера погоды.")
+    except requests.exceptions.ConnectionError:
+        raise ConnectionError("Не удалось подключиться к серверу погоды.")
+    except requests.exceptions.HTTPError as err:
+        if response.status_code == 401:
+            raise PermissionError("Неверный API-ключ для получения погоды.")
+        elif response.status_code == 403:
+            raise PermissionError("Доступ к API погоды запрещён.")
+        elif response.status_code == 404:
+            raise ValueError("Данные о погоде не найдены для заданных координат.")
+        else:
+            raise Exception(f"Ошибка HTTP при получении погоды: {err}")
+    except ValueError as ve:
+        raise ve
+    except Exception as e:
+        raise Exception(f"Ошибка при получении погоды: {e}")
+
+
+def parse_weather(data):
+    try:
+        return {
+            'temperature_celsius': data['Temperature']['Metric']['Value'],
+            'humidity_percent': data['RelativeHumidity'],
+            'wind_speed_kmh': data['Wind']['Speed']['Metric']['Value'],
+            'precipitation_probability_percent': data.get('PrecipitationProbability', 0)
         }
     except KeyError as e:
-        raise Exception(f"Отсутствует ожидаемый ключ в данных: {e}")
+        raise KeyError(f"Отсутствует ключ в данных: {e}")
 
 
-def check_bad_weather(temperature_celsius, wind_speed_kmh, precipitation_probability_percent):
-    if (temperature_celsius < -10 or temperature_celsius > 30) \
-            or (wind_speed_kmh > 50) \
-            or (precipitation_probability_percent > 70):
-        return "Плохие погодные условия"
-    return "Хорошие погодные условия"
+def evaluate_weather(temp, wind, precip):
+    if temp < 0:
+        if precip < 20:
+            if wind < 20:
+                return 'Наденьте куртку! Погода безснежная, ветра нет'
+            elif wind < 30:
+                return 'Наденьте куртку! Ветер умеренный, снега нет'
+            else:
+                return 'Наденьте куртку! Снега нет, ветер сильный'
+        elif 20 <= precip <= 50:
+            if wind < 20:
+                return 'Наденьте куртку! Скорее всего будет снег, ветра нет'
+            elif wind < 30:
+                return 'Наденьте куртку! Ветер умеренный, скорее всего будет снег'
+            else:
+                return 'Наденьте куртку! Ветер сильный, скорее всего будет снег'
+        else:
+            if wind < 20:
+                return 'Наденьте куртку! На улице снег, ветра нет'
+            elif wind < 30:
+                return 'Наденьте куртку! Ветер умеренный, на улице снег'
+            else:
+                return 'Наденьте куртку! Ветер сильный, на улице снег'
+
+    elif 0 <= temp <= 15:
+        if precip < 20:
+            if wind < 20:
+                return 'Температура приятная! Дождя и ветра нет'
+            elif wind < 30:
+                return 'Температура приятная! Дождя нет, ветер умеренный'
+            else:
+                return 'Температура приятная! Дождя нет, ветер сильный'
+        elif 20 <= precip <= 50:
+            if wind < 20:
+                return 'Температура приятная! Скорее всего будет дождь, ветра нет'
+            elif wind < 30:
+                return 'Температура приятная! Скорее всего будет дождь, ветер умеренный'
+            else:
+                return 'Температура приятная! Скорее всего будет дождь, сильный ветер'
+        else:
+            if wind < 20:
+                return 'Температура приятная! Будет дождь, ветра нет'
+            elif wind < 30:
+                return 'Температура приятная! Будет дождь, ветер умеренный'
+            else:
+                return 'Температура приятная! Будет дождь, ветер сильный'
+
+    else:
+        if precip < 20:
+            if wind < 20:
+                return 'Жара! Дождя и ветра нет'
+            elif wind < 30:
+                return 'Жара! Дождя нет, ветер умеренный'
+            else:
+                return 'Жара! Дождя нет, ветер сильный'
+        elif 20 <= precip <= 50:
+            if wind < 20:
+                return 'Жара! Скорее всего будет дождь, ветра нет'
+            elif wind < 30:
+                return 'Жара! Скорее всего будет дождь, ветер умеренный'
+            else:
+                return 'Жара! Скорее всего будет дождь, сильный ветер'
+        else:
+            if wind < 20:
+                return 'Жара! Будет дождь, ветра нет'
+            elif wind < 30:
+                return 'Жара! Будет дождь, ветер умеренный'
+            else:
+                return 'Жара! Будет дождь, ветер сильный'
 
 
-@app.route('/weather', methods=['GET'])
-def weather():
-    try:
-        latitude = request.args.get('latitude', type=float)
-        longitude = request.args.get('longitude', type=float)
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    if request.method == 'POST':
+        start_city = request.form.get('start_city')
+        end_city = request.form.get('end_city')
 
-        if latitude is None or longitude is None:
-            return jsonify({'error': 'Необходимо указать latitude и longitude'}), 400
+        if not start_city or not end_city:
+            return render_template('index.html', error="Пожалуйста, укажите начальную и конечную точки маршрута.")
 
-        weather_json = get_weather_data(latitude, longitude)
+        try:
+            start_loc = fetch_location(start_city)
+            start_weather_raw = fetch_weather(start_loc['key'])
+            start_weather = parse_weather(start_weather_raw)
+            start_evaluation = evaluate_weather(
+                start_weather['temperature_celsius'],
+                start_weather['wind_speed_kmh'],
+                start_weather['precipitation_probability_percent']
+            )
 
-        key_parameters = extract_key_parameters(weather_json)
+            end_loc = fetch_location(end_city)
+            end_weather_raw = fetch_weather(end_loc['key'])
+            end_weather = parse_weather(end_weather_raw)
+            end_evaluation = evaluate_weather(
+                end_weather['temperature_celsius'],
+                end_weather['wind_speed_kmh'],
+                end_weather['precipitation_probability_percent']
+            )
 
-        weather_condition = check_bad_weather(
-            key_parameters['temperature_celsius'],
-            key_parameters['wind_speed_kmh'],
-            key_parameters['precipitation_probability_percent']
-        )
+            result = {
+                'start_city': start_city,
+                'start_weather': start_weather,
+                'start_condition': start_evaluation,
+                'end_city': end_city,
+                'end_weather': end_weather,
+                'end_condition': end_evaluation
+            }
 
-        response = {
-            **key_parameters,
-            'weather_condition': weather_condition
-        }
+            return render_template('result.html', result=result)
 
-        return jsonify(response)
+        except (ValueError, PermissionError, ConnectionError, KeyError) as error:
+            return render_template('index.html', error=str(error))
+        except Exception as e:
+            return render_template('index.html', error=f"Неизвестная ошибка: {e}")
 
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    return render_template('index.html')
 
 
 if __name__ == '__main__':
