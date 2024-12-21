@@ -4,8 +4,7 @@ import requests
 app = Flask(__name__)
 app.json.ensure_ascii = False
 
-API_KEY = 'lAL0BpVsgFlZeHsdBS2HXAgqfAAkXQQa'
-
+API_KEY = 'pGgYoPHTyfpCPY9vDwUYmVYyCy1fAGfd'
 
 def fetch_location(city):
     try:
@@ -51,19 +50,34 @@ def fetch_location(city):
 
 def fetch_weather(location_key):
     try:
-        url = f"http://dataservice.accuweather.com/currentconditions/v1/{location_key}"
-        params = {
-            'apikey': API_KEY,
-            'details': 'true'
-        }
-        response = requests.get(url, params=params, timeout=5)
-        response.raise_for_status()
-
-        data = response.json()
-        if not data:
-            raise ValueError("Нет данных о погоде.")
-
-        return data[0]
+        try:
+            params_weather = {'apikey': API_KEY,
+                              'details': 'true',
+                              'metric': 'true'}
+            r_weather = requests.get('http://dataservice.accuweather.com/forecasts/v1/hourly/1hour/' + location_key, params=params_weather)
+            r_weather.raise_for_status()
+            weather_json = r_weather.json()
+            temp = weather_json[0]['Temperature']['Value']
+            humidity = weather_json[0]['RelativeHumidity']
+            speed_wind = weather_json[0]['Wind']['Speed']['Value']
+            probability = weather_json[0]['PrecipitationProbability']
+            return {
+                'temperature_celsius': temp,
+                'humidity_percent': humidity,
+                'wind_speed_kmh': speed_wind,
+                'precipitation_probability_percent': probability
+            }
+        except requests.exceptions.ConnectionError:
+            raise ConnectionError("Не удалось подключиться к серверу")
+        except requests.exceptions.HTTPError:
+            if r_weather.status_code == 404:
+                raise ValueError('Неправильные данные')
+            elif r_weather.status_code == 503:
+                raise PermissionError('API не работают')
+            else:
+                raise PermissionError('Доступ запрещен')
+        except Exception as error:
+            print(f'Произошла неизвестная ошибка: {error}')
 
     except requests.exceptions.Timeout:
         raise ConnectionError("Превышено время ожидания ответа от сервера погоды.")
@@ -82,19 +96,6 @@ def fetch_weather(location_key):
         raise ve
     except Exception as e:
         raise Exception(f"Ошибка при получении погоды: {e}")
-
-
-def parse_weather(data):
-    try:
-        return {
-            'temperature_celsius': data['Temperature']['Metric']['Value'],
-            'humidity_percent': data['RelativeHumidity'],
-            'wind_speed_kmh': data['Wind']['Speed']['Metric']['Value'],
-            'precipitation_probability_percent': data.get('PrecipitationProbability', 0)
-        }
-    except KeyError as e:
-        raise KeyError(f"Отсутствует ключ в данных: {e}")
-
 
 def evaluate_weather(temp, wind, precip):
     if temp < 0:
@@ -178,8 +179,7 @@ def index():
 
         try:
             start_loc = fetch_location(start_city)
-            start_weather_raw = fetch_weather(start_loc['key'])
-            start_weather = parse_weather(start_weather_raw)
+            start_weather = fetch_weather(start_loc['key'])
             start_evaluation = evaluate_weather(
                 start_weather['temperature_celsius'],
                 start_weather['wind_speed_kmh'],
@@ -187,8 +187,7 @@ def index():
             )
 
             end_loc = fetch_location(end_city)
-            end_weather_raw = fetch_weather(end_loc['key'])
-            end_weather = parse_weather(end_weather_raw)
+            end_weather = fetch_weather(end_loc['key'])
             end_evaluation = evaluate_weather(
                 end_weather['temperature_celsius'],
                 end_weather['wind_speed_kmh'],
