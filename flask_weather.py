@@ -1,10 +1,13 @@
 from flask import Flask, render_template, request
 import requests
+from dash import Dash, dcc, html
+from dash.dependencies import Input, Output
+import plotly.graph_objs as go
 
 app = Flask(__name__)
 app.json.ensure_ascii = False
 
-API_KEY = 'pGgYoPHTyfpCPY9vDwUYmVYyCy1fAGfd'
+API_KEY = 'cv8VeHciL0CyfUmikfoT6YdG0AgrAvUH'
 
 def fetch_location(city):
     try:
@@ -47,55 +50,33 @@ def fetch_location(city):
     except Exception as e:
         raise Exception(f"Произошла ошибка при поиске города: {e}")
 
-
 def fetch_weather(location_key):
     try:
-        try:
-            params_weather = {'apikey': API_KEY,
-                              'details': 'true',
-                              'metric': 'true'}
-            r_weather = requests.get('http://dataservice.accuweather.com/forecasts/v1/hourly/1hour/' + location_key, params=params_weather)
-            r_weather.raise_for_status()
-            weather_json = r_weather.json()
-            temp = weather_json[0]['Temperature']['Value']
-            humidity = weather_json[0]['RelativeHumidity']
-            speed_wind = weather_json[0]['Wind']['Speed']['Value']
-            probability = weather_json[0]['PrecipitationProbability']
-            return {
-                'temperature_celsius': temp,
-                'humidity_percent': humidity,
-                'wind_speed_kmh': speed_wind,
-                'precipitation_probability_percent': probability
-            }
-        except requests.exceptions.ConnectionError:
-            raise ConnectionError("Не удалось подключиться к серверу")
-        except requests.exceptions.HTTPError:
-            if r_weather.status_code == 404:
-                raise ValueError('Неправильные данные')
-            elif r_weather.status_code == 503:
-                raise PermissionError('API не работают')
-            else:
-                raise PermissionError('Доступ запрещен')
-        except Exception as error:
-            print(f'Произошла неизвестная ошибка: {error}')
-
-    except requests.exceptions.Timeout:
-        raise ConnectionError("Превышено время ожидания ответа от сервера погоды.")
+        params_weather = {'apikey': API_KEY, 'details': 'true', 'metric': 'true'}
+        r_weather = requests.get('http://dataservice.accuweather.com/forecasts/v1/hourly/1hour/' + location_key, params=params_weather)
+        r_weather.raise_for_status()
+        weather_json = r_weather.json()
+        temp = weather_json[0]['Temperature']['Value']
+        humidity = weather_json[0]['RelativeHumidity']
+        speed_wind = weather_json[0]['Wind']['Speed']['Value']
+        probability = weather_json[0]['PrecipitationProbability']
+        return {
+            'temperature_celsius': temp,
+            'humidity_percent': humidity,
+            'wind_speed_kmh': speed_wind,
+            'precipitation_probability_percent': probability
+        }
     except requests.exceptions.ConnectionError:
-        raise ConnectionError("Не удалось подключиться к серверу погоды.")
+        raise ConnectionError("Не удалось подключиться к серверу")
     except requests.exceptions.HTTPError as err:
-        if response.status_code == 401:
-            raise PermissionError("Неверный API-ключ для получения погоды.")
-        elif response.status_code == 403:
-            raise PermissionError("Доступ к API погоды запрещён.")
-        elif response.status_code == 404:
-            raise ValueError("Данные о погоде не найдены для заданных координат.")
+        if r_weather.status_code == 404:
+            raise ValueError('Неправильные данные')
+        elif r_weather.status_code == 503:
+            raise PermissionError('API не работают')
         else:
-            raise Exception(f"Ошибка HTTP при получении погоды: {err}")
-    except ValueError as ve:
-        raise ve
-    except Exception as e:
-        raise Exception(f"Ошибка при получении погоды: {e}")
+            raise PermissionError('Доступ запрещен')
+    except Exception as error:
+        raise
 
 def evaluate_weather(temp, wind, precip):
     if temp < 0:
@@ -167,7 +148,6 @@ def evaluate_weather(temp, wind, precip):
             else:
                 return 'Жара! Будет дождь, ветер сильный'
 
-
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
@@ -194,6 +174,10 @@ def index():
                 end_weather['precipitation_probability_percent']
             )
 
+            # Сохраним данные о погоде в сессии
+            app.config['start_weather'] = start_weather
+            app.config['end_weather'] = end_weather
+
             result = {
                 'start_city': start_city,
                 'start_weather': start_weather,
@@ -213,5 +197,73 @@ def index():
     return render_template('index.html')
 
 
+# Dash integration
+app_dash = Dash(__name__, server=app, routes_pathname_prefix='/dash/')
+
+app_dash.layout = html.Div([
+    html.A("Вернуться к результатам", href='/', className='button-return'),  # Кнопка для возврата
+    dcc.Dropdown(
+        id='weather-parameter',
+        options=[
+            {'label': 'Температура', 'value': 'temperature'},
+            {'label': 'Скорость ветра', 'value': 'wind'},
+            {'label': 'Вероятность осадков', 'value': 'precipitation'},
+        ],
+        value='temperature'
+    ),
+    dcc.Graph(id='weather-graph'),
+])
+
+@app_dash.callback(
+    Output('weather-graph', 'figure'),
+    [Input('weather-parameter', 'value')]
+)
+def update_graph(parameter):
+    start_weather = app.config.get('start_weather')
+    end_weather = app.config.get('end_weather')
+    start_city = 'Начальный город'
+    end_city = 'Конечный город'
+    if not start_weather or not end_weather:
+        return go.Figure()
+
+    start_temp = start_weather['temperature_celsius']
+    end_temp = end_weather['temperature_celsius']
+    start_wind = start_weather['wind_speed_kmh']
+    end_wind = end_weather['wind_speed_kmh']
+    start_precip = start_weather['precipitation_probability_percent']
+    end_precip = end_weather['precipitation_probability_percent']
+
+    if parameter == 'temperature':
+        figure = go.Figure()
+        figure.add_trace(go.Bar(
+            x=[start_city, end_city],
+            y=[start_temp, end_temp],
+            name='Температура (°C)',
+            marker_color='blue'
+        ))
+    elif parameter == 'wind':
+        figure = go.Figure()
+        figure.add_trace(go.Scatter(
+            x=[start_city, end_city],
+            y=[start_wind, end_wind],
+            mode='lines+markers',
+            name='Скорость ветра (км/ч)',
+            marker=dict(color='orange'),
+        ))
+    else:
+        figure = go.Figure()
+        figure.add_trace(go.Bar(
+            x=[start_city, end_city],
+            y=[start_precip, end_precip],
+            name='Вероятность осадков (%)'
+        ))
+
+    figure.update_layout(title='Погодные данные',
+                         xaxis_title='Города',
+                         yaxis_title='Значение')
+    return figure
+
 if __name__ == '__main__':
     app.run(debug=True)
+
+

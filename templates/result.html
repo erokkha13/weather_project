@@ -62,6 +62,24 @@
             text-decoration: underline;
         }
 
+        /* Кнопка для перехода к графикам */
+        .button {
+            display: inline-block;
+            margin-top: 15px;
+            padding: 10px 20px;
+            background-color: #007BFF;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            text-align: center;
+            font-size: 16px;
+            text-decoration: none;
+            transition: background-color 0.3s ease;
+        }
+        .button:hover {
+            background-color: #0056b3;
+        }
+
         /* Адаптивные стили */
         @media (max-width: 600px) {
             .container {
@@ -70,7 +88,7 @@
             .weather-data p {
                 font-size: 14px;
             }
-            a {
+            a, .button {
                 font-size: 14px;
             }
         }
@@ -114,7 +132,8 @@
             </div>
         </div>
 
-        <a href="{{ url_for('index') }}">Вернуться к форме</a>
+        <a class="button" href="{{ url_for('index') }}">Вернуться к форме</a>
+        <a class="button" href="/dash/">Перейти к графикам</a>
     </div>
 </body>
 </html>
